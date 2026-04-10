@@ -1,0 +1,405 @@
+%  SCRIPT 2 (STEEL BOLT) — Cyclic Degradation: Displacement at Key
+%                          Load Levels and Cumulative Permanent Slip
+%  FIGURES:
+%   Fig 1  — Sample 5: displacement at each load level per run
+%   Fig 2  — Sample 6: displacement at each load level per run
+%   Fig 3  — Cross-sample summary (S5 & S6 only — S4 RT went to failure)
+%   Fig 4  — Cumulative permanent slip (stacked bar, S5 & S6)
+%   Fig 5  — Cumulative permanent slip across cycles
+%   Fig 6  — Elastic recovery per run
+
+clear; clc; close all;
+
+%  CONFIGURATION
+FILE      = 'Testing Summary Data.xlsx';
+EC5       = 4.903;
+EXCEL_OUT = 'Script2_Results_SteelBolt.xlsx';
+
+T40 = 0.40 * EC5;
+T10 = 0.10 * EC5;
+T70 = 0.70 * EC5;
+
+OFFSETS = struct( ...
+    'S5_R1',38, 'S5_R2',38, 'S5_RT',5, ...
+    'S6_R1',73, 'S6_R2',51, 'S6_RT',50  ...
+);
+
+% Colours
+C_S5 = [0.93, 0.69, 0.13];   % Gold
+C_S6 = [0.30, 0.75, 0.93];   % Cyan
+C_R1 = [0.00, 0.45, 0.70];
+C_R2 = [0.85, 0.33, 0.10];
+C_RT = [0.47, 0.67, 0.19];
+
+sampleNames   = {'S5','S6'};
+sampleTitles  = {'Sample 5','Sample 6'};
+sampleColours = [C_S5; C_S6];
+sampleMarkers = {'s','^'};
+runColours    = [C_R1; C_R2; C_RT];
+runLabels     = {'Run 1 (Initial)','Run 2','Retest'};
+CYCLE_LABELS  = {'Run 1 (Initial)','Run 2','Retest'};
+LEVEL_LABELS  = {'At 40%','At 10%','At 70%','Max','Residual'};
+levelColours  = [0.00,0.45,0.70; 0.85,0.33,0.10; 0.47,0.67,0.19;
+                 0.49,0.18,0.56; 0.70,0.70,0.70];
+
+% Update run labels and cycle labels to refer to Run 3 instead of "Retest"
+runLabels{3} = 'Run 3';
+CYCLE_LABELS{3} = 'Run 3';
+
+sampleTitles = sampleTitles; % no change to sample titles
+LEVEL_LABELS = LEVEL_LABELS; % no change
+
+RUN_DISPLAY = {runLabels{1}, runLabels{2}, runLabels{3}};
+
+%  LOAD DATA
+fprintf('Loading data from: %s\n', FILE);
+
+runs = struct( ...
+    'S5_R1', loadRun(FILE,'Steel Bolt Sample 5 2SG - Decon', OFFSETS.S5_R1), ...
+    'S5_R2', loadRun(FILE,'Steel Bolt Sample 5 2SG - Retes', OFFSETS.S5_R2), ...
+    'S5_RT', loadRun(FILE,'Steel Bolt Sample 5 2SG - R (2)', OFFSETS.S5_RT), ...
+    'S6_R1', loadRun(FILE,'Steel Bolt Sample 6 2SG - Decon', OFFSETS.S6_R1), ...
+    'S6_R2', loadRun(FILE,'Steel Bolt Sample 6 2SG - Retes', OFFSETS.S6_R2), ...
+    'S6_RT', loadRun(FILE,'Steel Bolt Sample 6 2SG - R (2)', OFFSETS.S6_RT)  ...
+);
+
+fprintf('Data loaded.\n\n');
+
+%  EXTRACT KEY METRICS
+fields = {'S5_R1','S5_R2','S5_RT','S6_R1','S6_R2','S6_RT'};
+
+KD = struct();
+for i = 1:6
+    r  = runs.(fields{i});
+    kd = extractKeyDisplacements(r.Load, r.Position, T40, T10, T70);
+    % Secant stiffness at 40% EC5 cyclic peak
+    if kd.disp40 > 0
+        kd.stiff = kd.load40 / kd.disp40;
+    else
+        kd.stiff = NaN;
+    end
+    KD.(fields{i}) = kd;
+end
+
+DISP = struct();
+for s = 1:2
+    sn = sampleNames{s};
+    for fld = {'disp40','disp10','disp70','dispMax','dispEnd','stiff'}
+        f = fld{1};
+        DISP.(sn).(f) = [KD.([sn '_R1']).(f), KD.([sn '_R2']).(f), KD.([sn '_RT']).(f)];
+    end
+    DISP.(sn).elasticRec = DISP.(sn).dispMax - DISP.(sn).dispEnd;
+    DISP.(sn).cumSlip    = cumsum(DISP.(sn).dispEnd);
+    DISP.(sn).stiffNorm  = DISP.(sn).stiff ./ DISP.(sn).stiff(1);
+end
+
+% Print summary
+fprintf('%-6s %-5s  %6s %6s %6s %6s %6s  %8s\n', ...
+    'Samp','Run','d40','d70','dmax','dend','stiff','cumSlip');
+fprintf('%s\n',repmat('-',1,60));
+for s=1:2
+    sn=sampleNames{s};
+    cum=0;
+    for r=1:3
+        cum=cum+DISP.(sn).dispEnd(r);
+        fprintf('%-6s %-5s  %6.3f %6.3f %6.3f %6.3f %6.4f  %8.3f\n', ...
+            sn,runLabels{r}(1:min(5,end)), DISP.(sn).disp40(r), ...
+            DISP.(sn).disp70(r), DISP.(sn).dispMax(r), ...
+            DISP.(sn).dispEnd(r), DISP.(sn).stiff(r), cum);
+    end
+    fprintf('\n');
+end
+
+%  FIGURES 1–2 — Per-Sample Degradation (S5 and S6)
+for s = 1:2
+    sn  = sampleNames{s};
+    D   = DISP.(sn);
+    mat = [D.disp40; D.disp10; D.disp70; D.dispMax; D.dispEnd];
+
+    figure('Name',sprintf('Fig%d — Cyclic Degradation %s (Steel Bolt)',s,sampleTitles{s}), ...
+        'NumberTitle','off','Position',[50+s*25,120,820,640]);
+
+    ax1 = subplot(2,1,1);
+    b   = bar(mat','grouped');
+    for k=1:5; b(k).FaceColor=levelColours(k,:); b(k).FaceAlpha=0.85;
+        b(k).EdgeColor=levelColours(k,:)*0.7; end
+    set(ax1,'XTickLabel',CYCLE_LABELS,'FontSize',10);
+    ylabel('Displacement (mm)','FontSize',11);
+    title(sprintf('%s — Displacement at Each Load Level per Run (Steel Bolt)', ...
+        sampleTitles{s}),'FontSize',12,'FontWeight','bold');
+    legend(LEVEL_LABELS,'Location','northwest','FontSize',9,'NumColumns',2);
+    grid on; box on;
+    text(0.98,0.97,sprintf('EC5 = %.3f kN',EC5),'Units','normalized', ...
+        'HorizontalAlignment','right','VerticalAlignment','top', ...
+        'FontSize',8,'Color',[0.4 0.4 0.4],'FontAngle','italic');
+
+    ax2 = subplot(2,1,2);
+    hold on; grid on; box on;
+    markers={'o','s','^','d','v'};
+    for k=1:5
+        plot(1:3,mat(k,:),'Color',levelColours(k,:),'LineStyle','-', ...
+            'LineWidth',1.6,'Marker',markers{k},'MarkerSize',7, ...
+            'MarkerFaceColor',levelColours(k,:),'DisplayName',LEVEL_LABELS{k});
+    end
+    xlim([0.7,3.3]);
+    set(ax2,'XTick',1:3,'XTickLabel',CYCLE_LABELS,'FontSize',10);
+    ylabel('Displacement (mm)','FontSize',11);
+    xlabel('Reassembly Cycle','FontSize',11);
+    title(sprintf('%s — Displacement Degradation Across Cycles',sampleTitles{s}), ...
+        'FontSize',12,'FontWeight','bold');
+    legend('Location','best','FontSize',9,'NumColumns',2);
+    hold off;
+end
+
+%  FIGURE 3 — Cross-Sample Summary (S5 & S6)
+fig3 = figure('Name','Fig3 — Cross-Sample Degradation Summary (Steel Bolt)', ...
+    'NumberTitle','off','Position',[200,60,1000,580]);
+
+levelFields2 = {'disp40','disp10','disp70','dispMax','dispEnd'};
+levelTitles2 = {'Disp. at 40% (1.96 kN)','Disp. at 10% — Trough', ...
+    'Disp. at 70% — Peak','Max Displacement','Per-Run Residual'};
+
+for lv=1:5
+    ax=subplot(2,3,lv); hold on; grid on; box on;
+    for s=1:2
+        sn=sampleNames{s};
+        plot(1:3,DISP.(sn).(levelFields2{lv}),'Color',sampleColours(s,:), ...
+            'LineStyle','-','LineWidth',1.8,'Marker',sampleMarkers{s}, ...
+            'MarkerSize',7,'MarkerFaceColor',sampleColours(s,:), ...
+            'DisplayName',sampleTitles{s});
+    end
+    xlim([0.7,3.3]); set(ax,'XTick',1:3,'XTickLabel',{'R1','R2','RT'},'FontSize',9);
+    ylabel('Displacement (mm)','FontSize',9); xlabel('Cycle','FontSize',9);
+    title(levelTitles2{lv},'FontSize',9,'FontWeight','bold');
+    legend('Location','best','FontSize',8); hold off;
+end
+ax6=subplot(2,3,6); axis off;
+text(0.1,0.85,'Reference:','FontSize',10,'FontWeight','bold','Units','normalized');
+text(0.1,0.70,sprintf('EC5 = %.4f kN',EC5),'FontSize',9,'Units','normalized');
+text(0.1,0.58,sprintf('40%% = %.4f kN',T40),'FontSize',9,'Units','normalized');
+text(0.1,0.46,sprintf('70%% = %.4f kN',T70),'FontSize',9,'Units','normalized');
+text(0.1,0.30,'Note: Sample 4 excluded','FontSize',8,'Units','normalized', ...
+    'Color',[0.5 0.5 0.5],'FontAngle','italic');
+text(0.1,0.18,'(Retest went to failure)','FontSize',8,'Units','normalized', ...
+    'Color',[0.5 0.5 0.5],'FontAngle','italic');
+sgtitle('Cross-Sample Cyclic Degradation (Steel Bolt — S5 & S6)', ...
+    'FontSize',13,'FontWeight','bold');
+
+%  FIGURE 4 — Cumulative Permanent Slip (Stacked, S5 & S6)
+fig4 = figure('Name','Fig4 — Cumulative Permanent Slip (Steel Bolt)', ...
+    'NumberTitle','off','Position',[250,100,700,500]);
+ax4 = axes('Parent',fig4);
+hold(ax4,'on'); grid(ax4,'on'); box(ax4,'on');
+
+xPos=1:2; bWidth=0.5;
+for s=1:2
+    sn=sampleNames{s}; bottom=0;
+    for r=1:3
+        h=DISP.(sn).dispEnd(r); xL=xPos(s)-bWidth/2; xR=xPos(s)+bWidth/2;
+        patch(ax4,[xL xR xR xL],[bottom bottom bottom+h bottom+h], ...
+            runColours(r,:),'FaceAlpha',0.85,'EdgeColor','w','LineWidth',1.2, ...
+            'DisplayName',runLabels{r}, ...
+            'HandleVisibility',ternary(s==1,'on','off'));
+        if h>0.15
+            text(ax4,xPos(s),bottom+h/2,sprintf('%.2f',h), ...
+                'HorizontalAlignment','center','VerticalAlignment','middle', ...
+                'FontSize',8.5,'Color','w','FontWeight','bold');
+        end
+        bottom=bottom+h;
+    end
+end
+cumTotals=arrayfun(@(s) DISP.(sampleNames{s}).cumSlip(3),1:2);
+plot(ax4,xPos,cumTotals,'k-o','LineWidth',2.2,'MarkerSize',9, ...
+    'MarkerFaceColor','k','DisplayName','Cumulative Total');
+for s=1:2
+    text(ax4,xPos(s),cumTotals(s)+0.2,sprintf('%.2f mm',cumTotals(s)), ...
+        'HorizontalAlignment','center','FontSize',10,'FontWeight','bold');
+end
+set(ax4,'XTick',xPos,'XTickLabel',sampleTitles,'FontSize',12);
+ylabel(ax4,'Permanent Slip (mm)','FontSize',12);
+title(ax4,'Cumulative Permanent Slip — Per-Run Contribution (Steel Bolt)', ...
+    'FontSize',13,'FontWeight','bold');
+legend(ax4,'Location','northwest','FontSize',10);
+hold(ax4,'off');
+
+%  FIGURE 5 — Cumulative Progression + Elastic Recovery
+%  FIGURE 5 — Cumulative Permanent Slip Across Cycles
+fig5 = figure('Name','Fig5 — Cumulative Permanent Slip (Steel Bolt)','NumberTitle','off', ...
+    'Position',[300,100,700,500]);
+ax5 = axes('Parent',fig5);
+hold(ax5,'on'); grid(ax5,'on'); box(ax5,'on');
+for s=1:2
+    sn=sampleNames{s};
+    yVals=[0,DISP.(sn).cumSlip];
+    plot(ax5,0:3,yVals,'Color',sampleColours(s,:),'LineStyle','-','LineWidth',2.2, ...
+        'Marker',sampleMarkers{s},'MarkerSize',9,'MarkerFaceColor',sampleColours(s,:), ...
+        'DisplayName',sampleTitles{s});
+    text(ax5,3.08,DISP.(sn).cumSlip(3),sprintf('%.2f mm',DISP.(sn).cumSlip(3)), ...
+        'FontSize',9,'Color',sampleColours(s,:),'FontWeight','bold','VerticalAlignment','middle');
+end
+xlim(ax5,[-0.1,3.7]); ylim(ax5,[0,max(cumTotals)*1.2]);
+set(ax5,'XTick',0:3,'XTickLabel',{'Start','R1','R2','Retest'},'FontSize',10);
+ylabel(ax5,'Cumulative Permanent Slip (mm)','FontSize',11);
+xlabel(ax5,'Reassembly Cycle','FontSize',11);
+title(ax5,'Cumulative Permanent Slip Across Cycles — Steel Bolt', ...
+    'FontSize',12,'FontWeight','bold');
+legend(ax5,'Location','northwest','FontSize',10);
+hold(ax5,'off');
+
+%  FIGURE 6 — Elastic Recovery per Run
+fig6 = figure('Name','Fig6 — Elastic Recovery (Steel Bolt)','NumberTitle','off', ...
+    'Position',[360,100,700,500]);
+ax6 = axes('Parent',fig6);
+hold(ax6,'on'); grid(ax6,'on'); box(ax6,'on');
+allElastic=[DISP.S5.elasticRec; DISP.S6.elasticRec];
+meanElastic=mean(allElastic(:));
+for s=1:2
+    sn=sampleNames{s};
+    plot(ax6,1:3,DISP.(sn).elasticRec,'Color',sampleColours(s,:),'LineStyle','--', ...
+        'LineWidth',1.8,'Marker',sampleMarkers{s},'MarkerSize',9, ...
+        'MarkerFaceColor',sampleColours(s,:),'DisplayName',sampleTitles{s});
+end
+yline(meanElastic,'k:','LineWidth',1.8, ...
+    'DisplayName',sprintf('Mean = %.2f mm',meanElastic));
+fill(ax6,[0.5 3.5 3.5 0.5],[min(allElastic(:)) min(allElastic(:)) ...
+    max(allElastic(:)) max(allElastic(:))],[0.8 0.8 0.8], ...
+    'FaceAlpha',0.15,'EdgeColor','none','HandleVisibility','off');
+text(ax6,0.97,0.97,sprintf('Range: %.2f–%.2f mm\nMean:  %.2f mm', ...
+    min(allElastic(:)),max(allElastic(:)),meanElastic), ...
+    'Units','normalized','HorizontalAlignment','right','VerticalAlignment','top', ...
+    'FontSize',8.5,'BackgroundColor',[0.97 0.97 0.97],'EdgeColor',[0.6 0.6 0.6]);
+xlim(ax6,[0.5,3.5]);
+set(ax6,'XTick',1:3,'XTickLabel',CYCLE_LABELS,'FontSize',9);
+ylabel(ax6,'Elastic Recovery (mm)','FontSize',11);
+xlabel(ax6,'Reassembly Cycle','FontSize',11);
+title(ax6,{'Elastic Recovery per Run — Steel Bolt', ...
+    '(Max Displacement \minus Per-Run Residual)'}, ...
+    'FontSize',12,'FontWeight','bold');
+legend(ax6,'Location','best','FontSize',10);
+hold(ax6,'off');
+
+fprintf('All 6 figures generated.\n\n');
+
+%  EXCEL EXPORT
+fprintf('Writing Excel results to: %s\n', EXCEL_OUT);
+if isfile(EXCEL_OUT); delete(EXCEL_OUT); end
+
+cycSamples={'Sample 5','Sample 5','Sample 5','Sample 6','Sample 6','Sample 6'};
+cycRuns   ={'Run 1 (Initial)','Run 2','Retest', ...
+            'Run 1 (Initial)','Run 2','Retest'};
+allD40 =[DISP.S5.disp40,  DISP.S6.disp40];
+allD10 =[DISP.S5.disp10,  DISP.S6.disp10];
+allD70 =[DISP.S5.disp70,  DISP.S6.disp70];
+allMax =[DISP.S5.dispMax, DISP.S6.dispMax];
+allEnd =[DISP.S5.dispEnd, DISP.S6.dispEnd];
+allEla =[DISP.S5.elasticRec, DISP.S6.elasticRec];
+allStf =[DISP.S5.stiff,  DISP.S6.stiff];
+allCum =[DISP.S5.cumSlip,DISP.S6.cumSlip];
+
+% Sheet 1: Displacements
+SHT1='Displacements at Load Levels';
+writecell({'Steel Bolt Connections — Displacement at Eurocode Load Levels'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A1');
+writecell({sprintf('EC5 = %.4f kN | 40%% = %.4f kN | 10%% = %.4f kN | 70%% = %.4f kN | S4 excluded (RT to failure) | S6 To Failure excluded', ...
+    EC5,T40,T10,T70)},EXCEL_OUT,'Sheet',SHT1,'Range','A2');
+hdrs1={'Sample','Run','Disp. at 40% (mm)','Disp. at 10% (mm)', ...
+    'Disp. at 70% (mm)','Max Disp. (mm)','Residual (mm)','Elastic Recovery (mm)'};
+writecell(hdrs1,EXCEL_OUT,'Sheet',SHT1,'Range','A4');
+for i=1:6
+    row={cycSamples{i},cycRuns{i}, ...
+        round(allD40(i),3),round(allD10(i),3),round(allD70(i),3), ...
+        round(allMax(i),3),round(allEnd(i),3),round(allEla(i),3)};
+    writecell(row,EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',4+i));
+end
+
+% Sheet 2: Cumulative Slip
+SHT2='Cumulative Permanent Slip';
+writecell({'Steel Bolt Connections — Cumulative Permanent Slip Analysis'}, ...
+    EXCEL_OUT,'Sheet',SHT2,'Range','A1');
+hdrs2={'Sample','Run','Per-Run Residual (mm)','Cumulative Slip (mm)', ...
+    'Max Disp. (mm)','Elastic Recovery (mm)','Elastic Recovery % of Max'};
+writecell(hdrs2,EXCEL_OUT,'Sheet',SHT2,'Range','A4');
+for i=1:6
+    row={cycSamples{i},cycRuns{i}, ...
+        round(allEnd(i),3),round(allCum(i),3), ...
+        round(allMax(i),3),round(allEla(i),3), ...
+        round(allEla(i)/allMax(i)*100,1)};
+    writecell(row,EXCEL_OUT,'Sheet',SHT2,'Range',sprintf('A%d',4+i));
+end
+
+% Sheet 3: Stiffness Degradation
+SHT3='Stiffness Degradation';
+writecell({'Steel Bolt Connections — Stiffness Degradation Across Cycles'}, ...
+    EXCEL_OUT,'Sheet',SHT3,'Range','A1');
+hdrs3={'Sample','Run','Stiffness (kN/mm)','Run 1 Stiffness (kN/mm)', ...
+    'Stiffness Retention (%)','Stiffness Loss (%)'};
+writecell(hdrs3,EXCEL_OUT,'Sheet',SHT3,'Range','A4');
+r1refs=[repmat(DISP.S5.stiff(1),1,3), repmat(DISP.S6.stiff(1),1,3)];
+for i=1:6
+    ret=round(allStf(i)/r1refs(i)*100,1);
+    row={cycSamples{i},cycRuns{i},round(allStf(i),4),round(r1refs(i),4),ret,round(100-ret,1)};
+    writecell(row,EXCEL_OUT,'Sheet',SHT3,'Range',sprintf('A%d',4+i));
+end
+
+% Sheet 4: Elastic Recovery
+SHT4='Elastic Recovery Summary';
+writecell({'Steel Bolt Connections — Elastic Recovery Summary'}, ...
+    EXCEL_OUT,'Sheet',SHT4,'Range','A1');
+hdrs4={'Sample','Run','Max Disp. (mm)','Residual (mm)', ...
+    'Elastic Recovery (mm)','Recovery as % of Max'};
+writecell(hdrs4,EXCEL_OUT,'Sheet',SHT4,'Range','A4');
+for i=1:6
+    row={cycSamples{i},cycRuns{i},round(allMax(i),3),round(allEnd(i),3), ...
+        round(allEla(i),3),round(allEla(i)/allMax(i)*100,1)};
+    writecell(row,EXCEL_OUT,'Sheet',SHT4,'Range',sprintf('A%d',4+i));
+end
+writecell({'Statistical Summary — Elastic Recovery'},EXCEL_OUT,'Sheet',SHT4,'Range','A12');
+writecell({'Statistic','Value (mm)'},EXCEL_OUT,'Sheet',SHT4,'Range','A13');
+statsE={'Mean',round(mean(allEla(:)),3); 'Std Dev',round(std(allEla(:)),3); ...
+        'Min',round(min(allEla(:)),3);   'Max',round(max(allEla(:)),3)};
+for si=1:4
+    writecell(statsE(si,:),EXCEL_OUT,'Sheet',SHT4,'Range',sprintf('A%d',13+si));
+end
+
+fprintf('Excel file written: %s\n', EXCEL_OUT);
+fprintf('  Sheet 1: Displacements at Load Levels\n');
+fprintf('  Sheet 2: Cumulative Permanent Slip\n');
+fprintf('  Sheet 3: Stiffness Degradation\n');
+fprintf('  Sheet 4: Elastic Recovery Summary\n\n');
+
+%  LOCAL FUNCTIONS
+function data = loadRun(file, sheetName, offset)
+    T = readtable(file,'Sheet',sheetName,'VariableNamingRule','preserve');
+    if offset < 1 || offset > height(T); offset = 1; end
+    T             = T(offset:end,:);
+    data.Time     = T{:,1} - T{1,1};
+    data.Load     = T{:,2} - T{1,2};
+    data.Position = T{:,3} - T{1,3};
+    if width(T) >= 4; data.SG = T{:,4:end}; else; data.SG = []; end
+end
+
+function kd = extractKeyDisplacements(load, pos, T40, T10, T70)
+    loadSm      = movmean(load,5);
+    [~, idx70]  = max(loadSm);
+    [~, locs40] = findpeaks(loadSm(1:idx70), ...
+        'MinPeakHeight',0.90*T40,'MinPeakDistance',50);
+    if isempty(locs40)
+        idx40=find(loadSm>=T40,1,'first'); if isempty(idx40); idx40=1; end
+    else
+        idx40=locs40(1);
+    end
+    window      = loadSm(idx40:idx70);
+    [~, locs10] = findpeaks(-window,'MinPeakHeight',-0.8*T40,'MinPeakDistance',30);
+    if isempty(locs10)
+        [~,idxMin]=min(window); idx10=idx40+idxMin-1;
+    else
+        [~,best]=min(abs(window(locs10)-T10)); idx10=idx40+locs10(best)-1;
+    end
+    kd.disp40=pos(idx40); kd.load40=load(idx40); kd.disp10=pos(idx10); kd.disp70=pos(idx70);
+    kd.dispMax=max(pos);  kd.dispEnd=mean(pos(max(1,end-49):end));
+    kd.stiff=NaN;
+end
+
+function out = ternary(cond, a, b)
+    if cond; out=a; else; out=b; end
+end
