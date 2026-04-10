@@ -1,1 +1,1 @@
-To be able to run the code you need to have the folder with the data in the same folder as the code. The Excel files extract data from other excel files, they are all interlinked
+To be able to run the code you need to have the folder with the data in the same folder as the code. The Excel files extract data from other excel files, they are all interlinked. A Onedrive with all the data will be linked to the body of the main work to be able to access it.
