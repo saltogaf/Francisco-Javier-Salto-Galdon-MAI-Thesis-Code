@@ -1,0 +1,230 @@
+%  SCRIPT 1 (STAPLED CONNECTION) — Load vs Time & Load vs Displacement
+%                                 and Excel Results Export
+%  FIGURES:
+%   Fig 1  — Load vs Time
+%   Fig 2  — Load vs Displacement (full run to failure)
+%   Fig 3  — Load vs Displacement (zoomed to EC5 protocol region)
+
+clear; clc; close all;
+
+%  CONFIGURATION
+FILE      = 'Stapled_Results.xlsx';
+EC5       = 3.21;         % Stapled connection EC5 design capacity (kN)
+EXCEL_OUT = 'Script1_Results_Stapled.xlsx';
+
+% Eurocode load levels
+T40 = 0.40 * EC5;   % 1.284 kN
+T10 = 0.10 * EC5;   % 0.321 kN
+T70 = 0.70 * EC5;   % 2.247 kN
+
+% Colour
+C_STAPLE = [0.64, 0.08, 0.18];   % Dark red — stapled connection
+LW = 1.8;
+
+%  LOAD DATA
+fprintf('Loading data from: %s\n', FILE);
+
+% Data starts at row 5 (3 blank rows + 1 header row)
+T = readtable(FILE, 'Sheet', 'Sheet1', 'VariableNamingRule', 'preserve');
+T = T(4:end, :);   % skip blank rows + header, keep from row 5 onward
+
+Time = T{:,2};           % SecondsElapsed
+Pos  = T{:,3} - T{1,3}; % Position (mm), zero-referenced
+Load = T{:,4} - T{1,4}; % Load (kN), zero-referenced
+
+% Remove any rows with NaN
+valid = ~isnan(Time) & ~isnan(Pos) & ~isnan(Load);
+Time = Time(valid); Pos = Pos(valid); Load = Load(valid);
+
+fprintf('Data loaded: %d points over %.1f seconds.\n\n', ...
+    numel(Time), Time(end));
+
+%  EXTRACT KEY METRICS
+% Peak load and displacement
+[peakLoad, idxPeak] = max(Load);
+dispAtPeak = Pos(idxPeak);
+
+% Initial stiffness — linear regression on early loading (pos 0 to 0.6 mm)
+maskEarly = Pos > 0.01 & Pos < 0.60 & Load > 0.05;
+if sum(maskEarly) > 3
+    p = polyfit(Pos(maskEarly), Load(maskEarly), 1);
+    stiffness = p(1);
+else
+    stiffness = peakLoad / dispAtPeak;
+end
+
+% Displacement at key Eurocode load levels
+sm        = movmean(Load, 5);
+[~, locs40] = findpeaks(sm(1:idxPeak), 'MinPeakHeight', 0.9*T40, 'MinPeakDistance', 50);
+if isempty(locs40)
+    idx40 = find(sm >= T40, 1, 'first'); if isempty(idx40); idx40=1; end
+else
+    idx40 = locs40(1);
+end
+window    = sm(idx40:idxPeak);
+[~, locs10] = findpeaks(-window, 'MinPeakHeight', -0.8*T40, 'MinPeakDistance', 30);
+if isempty(locs10)
+    [~, idxMin] = min(window); idx10 = idx40 + idxMin - 1;
+else
+    [~, best] = min(abs(window(locs10) - T10)); idx10 = idx40 + locs10(best) - 1;
+end
+above70 = find(Load(idx10:idxPeak) >= T70, 1, 'first');
+if ~isempty(above70); idx70 = idx10 + above70 - 1; else; idx70 = idxPeak; end
+
+disp40 = Pos(idx40); load40 = Load(idx40);
+disp10 = Pos(idx10); load10 = Load(idx10);
+disp70 = Pos(idx70); load70 = Load(idx70);
+
+fprintf('=== Key Metrics ===\n');
+fprintf('EC5 design capacity:    %.4f kN\n', EC5);
+fprintf('Peak load:              %.3f kN\n', peakLoad);
+fprintf('Load / EC5:             %.3f\n',    peakLoad/EC5);
+fprintf('Displacement at peak:   %.3f mm\n', dispAtPeak);
+fprintf('Max displacement:       %.3f mm\n', max(Pos));
+fprintf('Initial stiffness:      %.4f kN/mm\n', stiffness);
+fprintf('Disp. at 40%% (%5.3f kN): %.3f mm\n', load40, disp40);
+fprintf('Disp. at 10%% (%5.3f kN): %.3f mm\n', load10, disp10);
+fprintf('Disp. at 70%% (%5.3f kN): %.3f mm\n\n', load70, disp70);
+
+%  FIGURE 1 — Load vs Time
+fig1 = figure('Name','Fig1 — Load vs Time (Stapled)','NumberTitle','off', ...
+    'Position',[60,120,800,480]);
+hold on; grid on; box on;
+plot(Time, Load, 'Color', C_STAPLE, 'LineWidth', LW, 'DisplayName', 'Stapled Connection');
+yline(EC5,  'k--', sprintf('EC5 = %.2f kN', EC5), 'LineWidth',1.2, ...
+    'LabelHorizontalAlignment','left','FontSize',9);
+yline(T40, '--', 'Color',[0.5 0.5 0.5], 'LineWidth',1.0, ...
+    'DisplayName', sprintf('40%% = %.2f kN',T40));
+yline(T70, '--', 'Color',[0.3 0.3 0.3], 'LineWidth',1.0, ...
+    'DisplayName', sprintf('70%% = %.2f kN',T70));
+xlabel('Time (s)',   'FontSize', 12);
+ylabel('Load (kN)',  'FontSize', 12);
+title('Load vs Time — Stapled Connection (Monotonic to Failure)', ...
+    'FontSize', 13, 'FontWeight', 'bold');
+legend('Location','northwest','FontSize',9);
+hold off;
+
+%  FIGURE 2 — Load vs Displacement (Full Run)
+fig2 = figure('Name','Fig2 — Load vs Displacement Full (Stapled)','NumberTitle','off', ...
+    'Position',[80,100,800,500]);
+hold on; grid on; box on;
+plot(Pos, Load, 'Color', C_STAPLE, 'LineWidth', LW, 'DisplayName', 'Stapled Connection');
+
+% Mark key points
+scatter(disp40, load40, 60, 'b', 'filled', 'DisplayName', ...
+    sprintf('40%% level (%.2f kN, %.2f mm)', load40, disp40));
+scatter(disp70, load70, 60, 'g', 'filled', 'DisplayName', ...
+    sprintf('70%% level (%.2f kN, %.2f mm)', load70, disp70));
+scatter(dispAtPeak, peakLoad, 80, 'r', 'filled', 'DisplayName', ...
+    sprintf('Peak (%.2f kN, %.2f mm)', peakLoad, dispAtPeak));
+
+yline(EC5,  'k--', sprintf('EC5 = %.2f kN', EC5), 'LineWidth',1.2, ...
+    'LabelHorizontalAlignment','left','FontSize',9);
+
+xlabel('Displacement (mm)', 'FontSize', 12);
+ylabel('Load (kN)',          'FontSize', 12);
+title('Load vs Displacement — Stapled Connection (Full Run to Failure)', ...
+    'FontSize', 13, 'FontWeight', 'bold');
+legend('Location','northeast','FontSize',9);
+hold off;
+
+%  FIGURE 3 — Load vs Displacement (Zoomed to EC5 Protocol Region)
+zoomMax = dispAtPeak * 1.15;
+
+fig3 = figure('Name','Fig3 — Load vs Displacement Zoomed (Stapled)','NumberTitle','off', ...
+    'Position',[100,80,800,500]);
+hold on; grid on; box on;
+
+maskZoom = Pos <= zoomMax;
+plot(Pos(maskZoom), Load(maskZoom), 'Color', C_STAPLE, 'LineWidth', LW, ...
+    'DisplayName', 'Stapled Connection');
+
+% Key point markers
+scatter(disp40, load40, 60, 'b', 'filled', 'DisplayName', ...
+    sprintf('40%% level (%.2f kN)', load40));
+scatter(disp10, load10, 60, [0.85 0.33 0.10], 'filled', 'DisplayName', ...
+    sprintf('10%% trough (%.2f kN)', load10));
+scatter(disp70, load70, 60, [0.47 0.67 0.19], 'filled', 'DisplayName', ...
+    sprintf('70%% level (%.2f kN)', load70));
+scatter(dispAtPeak, peakLoad, 80, 'r', 'filled', 'DisplayName', ...
+    sprintf('Peak (%.2f kN)', peakLoad));
+
+yline(EC5,  'k--', sprintf('EC5 = %.2f kN', EC5), 'LineWidth',1.2, ...
+    'LabelHorizontalAlignment','left','FontSize',9);
+
+% Annotate initial stiffness line
+xStiff = linspace(0, disp40*0.8, 50);
+yStiff = stiffness .* xStiff;
+plot(xStiff, yStiff, 'k:', 'LineWidth', 1.4, ...
+    'DisplayName', sprintf('Initial stiffness = %.3f kN/mm', stiffness));
+
+xlabel('Displacement (mm)', 'FontSize', 12);
+ylabel('Load (kN)',          'FontSize', 12);
+title({'Load vs Displacement — Stapled Connection (EC5 Protocol Region)', ...
+    'Zoomed to failure point for comparison with other typologies'}, ...
+    'FontSize', 13, 'FontWeight', 'bold');
+legend('Location','northwest','FontSize',9);
+xlim([0, zoomMax]); ylim([min(Load)*1.1, peakLoad*1.15]);
+hold off;
+
+fprintf('All 3 figures generated.\n\n');
+
+%  EXCEL EXPORT
+fprintf('Writing Excel results to: %s\n', EXCEL_OUT);
+if isfile(EXCEL_OUT); delete(EXCEL_OUT); end
+
+SHT1 = 'Monotonic Test Results';
+
+writecell({'Stapled Connection — Monotonic Failure Test Results'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A1');
+writecell({sprintf('EC5 Design Capacity = %.4f kN  |  Single specimen loaded to failure following Eurocode protocol', EC5)}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A2');
+writecell({'Data source: Book1.xlsx  |  Columns: ID, SecondsElapsed, Position (mm), Load (kN)'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A3');
+
+% Main results table
+hdrs = {'Metric','Value','Units','Notes'};
+writecell(hdrs, EXCEL_OUT,'Sheet',SHT1,'Range','A5');
+
+results = { ...
+    'EC5 Design Capacity',          round(EC5,4),           'kN',    'From Appendix A calculations'; ...
+    'Peak Load (Failure)',           round(peakLoad,3),      'kN',    'Global maximum load reached'; ...
+    'Load / EC5 Ratio',             round(peakLoad/EC5,3),  '—',     'Overstrength relative to design capacity'; ...
+    'Displacement at Peak Load',    round(dispAtPeak,3),    'mm',    'Connection displacement at failure'; ...
+    'Maximum Displacement',         round(max(Pos),3),      'mm',    'Post-failure run-out displacement'; ...
+    'Initial Stiffness',            round(stiffness,4),     'kN/mm', 'Linear regression on initial loading branch (pos 0–0.6 mm)'; ...
+    'Displacement at 40% EC5',      round(disp40,3),        'mm',    sprintf('Actual load at detection: %.3f kN', load40); ...
+    'Displacement at 10% EC5',      round(disp10,3),        'mm',    sprintf('Cyclic trough — actual load: %.3f kN', load10); ...
+    'Displacement at 70%% EC5',     round(disp70,3),        'mm',    sprintf('Actual load at detection: %.3f kN', load70)};
+
+for i = 1:size(results,1)
+    writecell(results(i,:), EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',5+i));
+end
+
+% Comparison block with other typologies
+writecell({'Comparison with Other Connection Typologies'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A16');
+writecell({'Metric','Wooden Dowel (mean)','Steel Bolt (mean)','Stapled Connection'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A17');
+
+compRows = { ...
+    'EC5 Capacity (kN)',        3.09,  4.90,  round(EC5,2); ...
+    'Peak Failure Load (kN)',   4.22,  8.97,  round(peakLoad,3); ...
+    'Load / EC5',               1.36,  1.83,  round(peakLoad/EC5,3); ...
+    'Initial Stiffness (kN/mm)','0.92–1.17','0.85–1.13', round(stiffness,3)};
+
+for i = 1:size(compRows,1)
+    writecell(compRows(i,:), EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',17+i));
+end
+
+notes = {'Notes:', ...
+    '1. Only one stapled connection specimen was tested — results are indicative only and cannot be statistically summarised.', ...
+    '2. The test followed the Eurocode loading protocol before continuous loading to failure.', ...
+    '3. Initial stiffness computed from the early linear region (pos 0–0.6 mm) to avoid influence of slip initiation kink.', ...
+    '4. No cyclic reassembly was performed — this test serves as a monotonic baseline only.'};
+for ni = 1:5
+    writecell(notes(ni), EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',23+ni));
+end
+
+fprintf('Excel file written: %s\n', EXCEL_OUT);
+fprintf('  Sheet 1: Monotonic Test Results\n\n');
