@@ -1,0 +1,425 @@
+%  SCRIPT 3 (STEEL BOLT) — Key Pattern Analysis: Publication-Quality Figures
+%  THREE FIGURES:
+%   Fig 1 — Analysis D: Stiffness vs Cumulative Slip (power law fit)
+%   Fig 2 — Analysis E: Normalised Stiffness Consistency
+%   Fig 3 — Analysis B: Degradation Rate Between Cycles
+
+clear; clc; close all;
+
+%  CONFIGURATION
+
+FILE      = 'Testing Summary Data.xlsx';
+EC5       = 4.903;
+EXCEL_OUT = 'Script3_PatternAnalysis_SteelBolt.xlsx';
+
+T40 = 0.40 * EC5;
+T10 = 0.10 * EC5;
+T70 = 0.70 * EC5;
+
+OFFSETS = struct( ...
+    'S5_R1',38, 'S5_R2',38, 'S5_RT',5, ...
+    'S6_R1',73, 'S6_R2',51, 'S6_RT',50  ...
+);
+
+% Colours
+C_S5 = [0.93, 0.69, 0.13];
+C_S6 = [0.30, 0.75, 0.93];
+C_CONV = [0.47, 0.67, 0.19];
+C_DIVG = [0.85, 0.33, 0.10];
+
+sampleNames   = {'S5','S6'};
+sampleTitles  = {'Sample 5','Sample 6'};
+sampleColours = [C_S5; C_S6];
+sampleMarkers = {'s','^'};
+cycleLabels   = {'Run 1 (Initial)','Run 2','Retest'};
+
+FONT_TITLE = 13; FONT_AXIS = 11; FONT_TICK = 10;
+FONT_LEGEND = 10; FONT_ANNOT = 9;
+LW_MAIN = 2.0; LW_REF = 1.4; LW_MINOR = 1.0; MARKER_SZ = 9;
+
+%  LOAD DATA & EXTRACT METRICS
+fprintf('Loading data...\n');
+
+fields  = {'S5_R1','S5_R2','S5_RT','S6_R1','S6_R2','S6_RT'};
+sheets  = { ...
+    'Steel Bolt Sample 5 2SG - Decon','Steel Bolt Sample 5 2SG - Retes', ...
+    'Steel Bolt Sample 5 2SG - R (2)','Steel Bolt Sample 6 2SG - Decon', ...
+    'Steel Bolt Sample 6 2SG - Retes','Steel Bolt Sample 6 2SG - R (2)'};
+offsets = [OFFSETS.S5_R1,OFFSETS.S5_R2,OFFSETS.S5_RT, ...
+           OFFSETS.S6_R1,OFFSETS.S6_R2,OFFSETS.S6_RT];
+
+KD = struct();
+for i = 1:6
+    d           = loadRun(FILE, sheets{i}, offsets(i));
+    KD.(fields{i}) = extractMetrics(d.Load, d.Position, T40, T10, T70);
+end
+
+M = struct();
+for s = 1:2
+    sn = sampleNames{s};
+    for f = {'d40','d70','dmax','dend','stiff'}
+        fld = f{1};
+        M.(sn).(fld) = [KD.([sn '_R1']).(fld), ...
+                        KD.([sn '_R2']).(fld), ...
+                        KD.([sn '_RT']).(fld)];
+    end
+    M.(sn).cumSlip   = cumsum(M.(sn).dend);
+    M.(sn).stiffNorm = M.(sn).stiff ./ M.(sn).stiff(1);
+    M.(sn).dendNorm  = M.(sn).dend  ./ M.(sn).dend(1);
+end
+
+fprintf('Data loaded.\n\n');
+
+% Console summary
+fprintf('%-6s %-5s  %7s  %7s  %7s  %8s\n','Samp','Run','dend','cumSlip','stiff','stiff/R1');
+fprintf('%s\n',repmat('-',1,52));
+for s=1:2
+    sn=sampleNames{s};
+    for r=1:3
+        fprintf('%-6s %-5s  %7.3f  %7.3f  %7.4f  %8.3f\n', ...
+            sn,cycleLabels{r}(1:5),M.(sn).dend(r), ...
+            M.(sn).cumSlip(r),M.(sn).stiff(r),M.(sn).stiffNorm(r));
+    end
+    fprintf('\n');
+end
+
+%  FIGURE 1 — Analysis D: Stiffness vs Cumulative Slip
+cumSlipAll = [M.S5.cumSlip, M.S6.cumSlip];
+stiffAll   = [M.S5.stiff,   M.S6.stiff];
+
+logS = log(cumSlipAll); logK = log(stiffAll);
+p_fit = polyfit(logS, logK, 1);
+b_pw  = p_fit(1); a_pw = exp(p_fit(2));
+logK_pred = polyval(p_fit, logS);
+R2_power  = 1 - sum((logK-logK_pred).^2)/sum((logK-mean(logK)).^2);
+
+stiff_floor = mean([M.S5.stiff(2:3), M.S6.stiff(2:3)]);
+xFitD = linspace(min(cumSlipAll)*0.75, max(cumSlipAll)*1.20, 300);
+yPower = a_pw .* xFitD.^b_pw;
+
+fig1 = figure('Name','Fig1 — Stiffness vs Cumulative Slip (Steel Bolt)', ...
+    'NumberTitle','off','Position',[60,120,820,560]);
+ax1 = axes('Parent',fig1);
+hold(ax1,'on'); grid(ax1,'on'); box(ax1,'on');
+ax1.GridAlpha=0.3; ax1.GridLineStyle=':'; ax1.FontSize=FONT_TICK; ax1.FontName='Arial';
+
+runMarkers = {'o','s','^'};
+runNames   = {'Run 1 (Initial)','Run 2','Retest'};
+
+for s=1:2
+    sn=sampleNames{s};
+    for r=1:3
+        if r==1; edgeCol='k'; edgeLW=1.8; else; edgeCol=sampleColours(s,:)*0.65; edgeLW=1.0; end
+        scatter(ax1,M.(sn).cumSlip(r),M.(sn).stiff(r),72, ...
+            'MarkerFaceColor',sampleColours(s,:),'MarkerEdgeColor',edgeCol, ...
+            'Marker',runMarkers{r},'LineWidth',edgeLW, ...
+            'DisplayName',sprintf('%s — %s',sampleTitles{s},runNames{r}));
+        text(ax1,M.(sn).cumSlip(r),M.(sn).stiff(r)+0.025, ...
+            sprintf('%s %s',sampleTitles{s}(end),runNames{r}(1:2)), ...
+            'FontSize',7.5,'FontName','Arial','Color',sampleColours(s,:)*0.75, ...
+            'HorizontalAlignment','center');
+    end
+end
+
+plot(ax1,xFitD,yPower,'k-','LineWidth',LW_MAIN+0.2, ...
+    'DisplayName',sprintf('Power law fit:  K = %.3f × S^{%.3f}  (R² = %.3f)', ...
+        a_pw,b_pw,R2_power));
+yline(ax1,stiff_floor,'--','Color',[0.5 0.5 0.5],'LineWidth',LW_REF, ...
+    'DisplayName',sprintf('Stiffness floor ≈ %.3f kN/mm',stiff_floor));
+
+xLim=[min(cumSlipAll)*0.75, max(cumSlipAll)*1.20];
+patch(ax1,[xLim(1) xLim(2) xLim(2) xLim(1)],[0 0 stiff_floor*0.88 stiff_floor*0.88], ...
+    [0.88 0.88 0.88],'FaceAlpha',0.25,'EdgeColor','none','HandleVisibility','off');
+
+annotation('textbox',[0.60,0.68,0.30,0.16], ...
+    'String',{'Power law fit:', ...
+        sprintf('  K = %.4f \times S^{%.4f}',a_pw,b_pw), ...
+        sprintf('  R² = %.4f',R2_power),'', ...
+        sprintf('Stiffness floor: %.3f kN/mm',stiff_floor)}, ...
+    'FontSize',FONT_ANNOT,'FontName','Arial', ...
+    'EdgeColor',[0.6 0.6 0.6],'BackgroundColor',[0.98 0.98 0.98],'LineWidth',0.8);
+
+xlabel(ax1,'Cumulative Permanent Slip (mm)','FontSize',FONT_AXIS,'FontName','Arial');
+ylabel(ax1,'Initial Stiffness (kN/mm)','FontSize',FONT_AXIS,'FontName','Arial');
+title(ax1,{'Stiffness vs Cumulative Permanent Slip (Steel Bolt)', ...
+    'Secant stiffness at 40% load level  |  Samples 5 & 6'}, ...
+    'FontSize',FONT_TITLE,'FontWeight','bold','FontName','Arial');
+xlim(ax1,xLim); ylim(ax1,[0,max(stiffAll)*1.25]);
+lgd=legend(ax1,'Location','northeast','FontSize',FONT_LEGEND,'FontName','Arial','NumColumns',2);
+lgd.Title.String='Sample — Cycle';
+hold(ax1,'off');
+
+
+%  FIGURE 2 — Normalised Stiffness Consistency
+normStiffMat = [M.S5.stiffNorm; M.S6.stiffNorm];
+meanNorm     = mean(normStiffMat,1);
+stdNorm      = std(normStiffMat,0,1);
+
+fig2 = figure('Name','Fig2 — Normalised Stiffness (Steel Bolt)', ...
+    'NumberTitle','off','Position',[90,100,740,520]);
+ax2 = axes('Parent',fig2);
+hold(ax2,'on'); grid(ax2,'on'); box(ax2,'on');
+ax2.GridAlpha=0.3; ax2.GridLineStyle=':'; ax2.FontSize=FONT_TICK; ax2.FontName='Arial';
+
+fill(ax2,[1 2 3 3 2 1],[meanNorm-stdNorm fliplr(meanNorm+stdNorm)], ...
+    [0.80 0.80 0.80],'FaceAlpha',0.30,'EdgeColor','none','HandleVisibility','off');
+
+for s=1:2
+    sn=sampleNames{s};
+    plot(ax2,1:3,M.(sn).stiffNorm,'-','Color',sampleColours(s,:), ...
+        'LineWidth',LW_MAIN,'Marker',sampleMarkers{s},'MarkerSize',MARKER_SZ, ...
+        'MarkerFaceColor',sampleColours(s,:),'DisplayName',sampleTitles{s});
+    for r=1:3
+        voffset=ternary(M.(sn).stiffNorm(r)>meanNorm(r),0.030,-0.045);
+        text(ax2,r,M.(sn).stiffNorm(r)+voffset,sprintf('%.2f',M.(sn).stiffNorm(r)), ...
+            'FontSize',FONT_ANNOT,'FontName','Arial','Color',sampleColours(s,:)*0.80, ...
+            'HorizontalAlignment','center','FontWeight','bold');
+    end
+end
+
+plot(ax2,1:3,meanNorm,'k--s','LineWidth',LW_REF,'MarkerSize',MARKER_SZ-1, ...
+    'MarkerFaceColor','k', ...
+    'DisplayName',sprintf('Mean: [1.00, %.2f, %.2f]',meanNorm(2),meanNorm(3)));
+
+yline(ax2,1.0,'Color',[0.3 0.3 0.3],'LineStyle',':','LineWidth',LW_MINOR, ...
+    'HandleVisibility','off');
+yline(ax2,0.50,'Color',[0.7 0.2 0.2],'LineStyle','--','LineWidth',LW_MINOR, ...
+    'DisplayName','50% retention');
+
+for r=2:3
+    sp=max(normStiffMat(:,r))-min(normStiffMat(:,r));
+    text(ax2,r,min(normStiffMat(:,r))-0.07,sprintf('spread\n%.2f',sp), ...
+        'HorizontalAlignment','center','FontSize',FONT_ANNOT-1, ...
+        'FontAngle','italic','Color',[0.5 0.5 0.5],'FontName','Arial');
+end
+
+xlim(ax2,[0.65,3.5]); ylim(ax2,[0.30,1.25]);
+set(ax2,'XTick',1:3,'XTickLabel',cycleLabels,'FontSize',FONT_TICK);
+xlabel(ax2,'Reassembly Cycle','FontSize',FONT_AXIS,'FontName','Arial');
+ylabel(ax2,'Normalised Initial Stiffness  (Run 1 = 1.0)', ...
+    'FontSize',FONT_AXIS,'FontName','Arial');
+title(ax2,{'Normalised Initial Stiffness Across Reassembly Cycles (Steel Bolt)', ...
+    'Each sample normalised to its own Run 1 baseline  |  Shaded band = ±1 SD'}, ...
+    'FontSize',FONT_TITLE,'FontWeight','bold','FontName','Arial');
+legend(ax2,'Location','southwest','FontSize',FONT_LEGEND,'FontName','Arial');
+hold(ax2,'off');
+
+%  FIGURE 3 — Degradation Rate
+fig3 = figure('Name','Fig3 — Degradation Rate (Steel Bolt)', ...
+    'NumberTitle','off','Position',[120,80,1020,500]);
+
+ax3L = subplot(1,2,1,'Parent',fig3);
+hold(ax3L,'on'); grid(ax3L,'on'); box(ax3L,'on');
+ax3L.GridAlpha=0.3; ax3L.GridLineStyle=':'; ax3L.FontSize=FONT_TICK;
+
+for s=1:2
+    sn=sampleNames{s};
+    plot(ax3L,1:3,M.(sn).dend,'-','Color',sampleColours(s,:), ...
+        'LineWidth',LW_MAIN,'Marker',sampleMarkers{s},'MarkerSize',MARKER_SZ, ...
+        'MarkerFaceColor',sampleColours(s,:),'DisplayName',sampleTitles{s});
+    for r=1:3
+        text(ax3L,r,M.(sn).dend(r)+0.06,sprintf('%.2f',M.(sn).dend(r)), ...
+            'FontSize',FONT_ANNOT-0.5,'Color',sampleColours(s,:)*0.80, ...
+            'HorizontalAlignment','center','FontName','Arial');
+    end
+end
+
+meanDend=mean([M.S5.dend;M.S6.dend],1);
+plot(ax3L,1:3,meanDend,'k--','LineWidth',LW_REF,'Marker','d','MarkerSize',7, ...
+    'MarkerFaceColor','k','DisplayName', ...
+    sprintf('Mean: [%.2f, %.2f, %.2f] mm',meanDend(1),meanDend(2),meanDend(3)));
+
+xlim(ax3L,[0.6,3.4]);
+ylim(ax3L,[0,max([M.S5.dend,M.S6.dend])*1.25]);
+set(ax3L,'XTick',1:3,'XTickLabel',cycleLabels,'FontSize',FONT_TICK);
+ylabel(ax3L,'Per-Run Residual Slip (mm)','FontSize',FONT_AXIS,'FontName','Arial');
+xlabel(ax3L,'Reassembly Cycle','FontSize',FONT_AXIS,'FontName','Arial');
+title(ax3L,{'Per-Run Residual Slip','Permanent deformation added by each run'}, ...
+    'FontSize',FONT_TITLE-1,'FontWeight','bold','FontName','Arial');
+legend(ax3L,'Location','northeast','FontSize',FONT_LEGEND,'FontName','Arial');
+hold(ax3L,'off');
+
+ax3R = subplot(1,2,2,'Parent',fig3);
+hold(ax3R,'on'); grid(ax3R,'on'); box(ax3R,'on');
+ax3R.GridAlpha=0.3; ax3R.GridLineStyle=':'; ax3R.FontSize=FONT_TICK;
+
+bw=0.30; xBase=1:2;
+labels_interval={'R1\rightarrowR2','R2\rightarrowRetest'};
+for s=1:2
+    sn=sampleNames{s};
+    deltas=diff(M.(sn).dend);
+    for d=1:2
+        xPos=xBase(s)+(d-1.5)*bw;
+        if deltas(d)<0; faceC=C_CONV; edgeC=C_CONV*0.7;
+        else;            faceC=C_DIVG; edgeC=C_DIVG*0.7; end
+        bar(ax3R,xPos,deltas(d),bw,'FaceColor',faceC,'FaceAlpha',0.85, ...
+            'EdgeColor',edgeC,'LineWidth',0.8);
+        txtY=deltas(d)+sign(deltas(d))*0.06;
+        text(ax3R,xPos,txtY,sprintf('%+.2f',deltas(d)), ...
+            'HorizontalAlignment','center','FontSize',FONT_ANNOT-0.5, ...
+            'FontWeight','bold','Color',edgeC,'FontName','Arial');
+    end
+end
+yline(ax3R,0,'k-','LineWidth',1.4,'HandleVisibility','off');
+text(ax3R,0.97,0.97, ...
+    {'\color[rgb]{0.47,0.67,0.19}Green = converging', ...
+     '\color[rgb]{0.85,0.33,0.10}Red = diverging'}, ...
+    'Units','normalized','FontSize',FONT_ANNOT,'FontName','Arial', ...
+    'HorizontalAlignment','right','VerticalAlignment','top');
+
+for s=1:2
+    for d=1:2
+        text(ax3R,xBase(s)+(d-1.5)*bw,-0.12,labels_interval{d}, ...
+            'HorizontalAlignment','center','FontSize',7,'FontName','Arial', ...
+            'Color',[0.4 0.4 0.4],'Rotation',30);
+    end
+end
+xlim(ax3R,[0.35,2.65]);
+allDeltas=abs(diff([M.S5.dend,M.S6.dend]));
+ylim(ax3R,[-max(allDeltas)*1.6, max(allDeltas)*1.6]);
+set(ax3R,'XTick',1:2,'XTickLabel',sampleTitles,'FontSize',FONT_TICK);
+ylabel(ax3R,'Change in Residual Slip (mm)','FontSize',FONT_AXIS,'FontName','Arial');
+title(ax3R,{'Slip Change Between Consecutive Cycles', ...
+    'Green = converging  |  Red = diverging'}, ...
+    'FontSize',FONT_TITLE-1,'FontWeight','bold','FontName','Arial');
+hold(ax3R,'off');
+
+sgtitle(fig3,'Degradation Rate Across Reassembly Cycles (Steel Bolt)', ...
+    'FontSize',FONT_TITLE,'FontWeight','bold','FontName','Arial');
+
+fprintf('All 3 figures generated.\n\n');
+
+%  EXCEL EXPORT
+fprintf('Writing Excel results to: %s\n', EXCEL_OUT);
+if isfile(EXCEL_OUT); delete(EXCEL_OUT); end
+
+cycSamples={'Sample 5','Sample 5','Sample 5','Sample 6','Sample 6','Sample 6'};
+cycRuns   ={'Run 1 (Initial)','Run 2','Retest','Run 1 (Initial)','Run 2','Retest'};
+stifAll_v =[M.S5.stiff,   M.S6.stiff];
+cumSlip_v =[M.S5.cumSlip, M.S6.cumSlip];
+dend_v    =[M.S5.dend,    M.S6.dend];
+stiffN_v  =[M.S5.stiffNorm,M.S6.stiffNorm];
+r1stiff_v =[repmat(M.S5.stiff(1),1,3), repmat(M.S6.stiff(1),1,3)];
+
+% Sheet 1: Stiffness vs Cumulative Slip
+SHT1='D - Stiffness vs Cumul Slip';
+writecell({'Analysis D — Steel Bolt: Stiffness vs Cumulative Permanent Slip'}, ...
+    EXCEL_OUT,'Sheet',SHT1,'Range','A1');
+writecell({sprintf('Power law fit: K = %.5f × S^%.5f   R² = %.5f   Stiffness floor = %.4f kN/mm', ...
+    a_pw,b_pw,R2_power,stiff_floor)},EXCEL_OUT,'Sheet',SHT1,'Range','A2');
+hdrsD={'Sample','Run','Cumulative Slip (mm)','Stiffness (kN/mm)', ...
+    'Power Law Predicted K (kN/mm)','Residual Error (kN/mm)'};
+writecell(hdrsD,EXCEL_OUT,'Sheet',SHT1,'Range','A4');
+for i=1:6
+    pred=round(a_pw*cumSlip_v(i)^b_pw,4);
+    writecell({cycSamples{i},cycRuns{i},round(cumSlip_v(i),3), ...
+        round(stifAll_v(i),4),pred,round(stifAll_v(i)-pred,4)}, ...
+        EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',4+i));
+end
+writecell({'Fit Parameters'},EXCEL_OUT,'Sheet',SHT1,'Range','A12');
+writecell({'Parameter','Value','Interpretation'},EXCEL_OUT,'Sheet',SHT1,'Range','A13');
+fitData={'a',round(a_pw,5),'Coefficient'; 'b',round(b_pw,5),'Exponent (negative = decay)'; ...
+         'R²',round(R2_power,5),'Goodness of fit'; ...
+         'Floor',round(stiff_floor,4),'Asymptotic lower bound (kN/mm)'};
+for fi=1:4; writecell(fitData(fi,:),EXCEL_OUT,'Sheet',SHT1,'Range',sprintf('A%d',13+fi)); end
+
+% Sheet 2: Normalised Stiffness
+SHT2='E - Normalised Stiffness';
+writecell({'Analysis E — Steel Bolt: Normalised Stiffness Across Cycles'}, ...
+    EXCEL_OUT,'Sheet',SHT2,'Range','A1');
+hdrsE={'Sample','Run','Stiffness (kN/mm)','Run 1 Stiffness (kN/mm)', ...
+    'Normalised Stiffness','Retention (%)','Loss (%)'};
+writecell(hdrsE,EXCEL_OUT,'Sheet',SHT2,'Range','A4');
+for i=1:6
+    ret=round(stifAll_v(i)/r1stiff_v(i)*100,1);
+    writecell({cycSamples{i},cycRuns{i},round(stifAll_v(i),4), ...
+        round(r1stiff_v(i),4),round(stiffN_v(i),4),ret,round(100-ret,1)}, ...
+        EXCEL_OUT,'Sheet',SHT2,'Range',sprintf('A%d',4+i));
+end
+normMat=[M.S5.stiffNorm;M.S6.stiffNorm];
+writecell({'Cross-Sample Summary'},EXCEL_OUT,'Sheet',SHT2,'Range','A12');
+writecell({'Statistic','Run 1','Run 2','Retest'},EXCEL_OUT,'Sheet',SHT2,'Range','A13');
+sumStats={'Mean',round(mean(normMat(:,1)),3),round(mean(normMat(:,2)),3),round(mean(normMat(:,3)),3); ...
+          'Std Dev',round(std(normMat(:,1)),3),round(std(normMat(:,2)),3),round(std(normMat(:,3)),3); ...
+          'Spread',0,round(max(normMat(:,2))-min(normMat(:,2)),3),round(max(normMat(:,3))-min(normMat(:,3)),3)};
+for si=1:3; writecell(sumStats(si,:),EXCEL_OUT,'Sheet',SHT2,'Range',sprintf('A%d',13+si)); end
+
+% Sheet 3: Degradation Rate
+SHT3='B - Degradation Rate';
+writecell({'Analysis B — Steel Bolt: Per-Run Residual Slip Rate of Change'}, ...
+    EXCEL_OUT,'Sheet',SHT3,'Range','A1');
+hdrsB={'Sample','Run','Per-Run Residual (mm)','Cumulative Slip (mm)', ...
+    'Delta vs Previous (mm)','Converging?'};
+writecell(hdrsB,EXCEL_OUT,'Sheet',SHT3,'Range','A4');
+for i=1:6
+    if strcmp(cycRuns{i},'Run 1 (Initial)'); delta='N/A'; conv='N/A';
+    else
+        deltaVal=round(dend_v(i)-dend_v(i-1),3);
+        delta=deltaVal;
+        if deltaVal<0; conv='Yes (converging)'; else; conv='No (still diverging)'; end
+    end
+    writecell({cycSamples{i},cycRuns{i},round(dend_v(i),3), ...
+        round(cumSlip_v(i),3),delta,conv}, ...
+        EXCEL_OUT,'Sheet',SHT3,'Range',sprintf('A%d',4+i));
+end
+
+% Sheet 4: Summary of Key Findings
+SHT4='Summary of Key Findings';
+writecell({'Key Findings — Steel Bolt Connection Pattern Analysis'}, ...
+    EXCEL_OUT,'Sheet',SHT4,'Range','A1');
+findings={'Finding','Analysis','Key Metric','Value','Implication'; ...
+    'Stiffness predictable from damage','D','R²',round(R2_power,3), ...
+        'Power law fit quality — compare to wooden dowel R²'; ...
+    'Post-reassembly stiffness floor','D+E','Mean floor (kN/mm)',round(stiff_floor,3), ...
+        sprintf('%.0f%% of mean Run 1',stiff_floor/mean([M.S5.stiff(1),M.S6.stiff(1)])*100); ...
+    'Mean normalised stiffness at R2','E','Stiffness ratio',round(mean(normMat(:,2)),3), ...
+        'Compare to wooden dowel (~0.50) — indicates relative resilience'; ...
+    'Convergence at Retest','B','Samples converging at RT', ...
+        sprintf('%d of %d',sum(diff([M.S5.dend;M.S6.dend],1,2)<0),2*2),''; ...
+    'R1 contributes most damage','B','Mean R1 residual (mm)', ...
+        round(mean([M.S5.dend(1),M.S6.dend(1)]),3),'First loading permanently deforms bolt hole'};
+for fi=1:6; writecell(findings(fi,:),EXCEL_OUT,'Sheet',SHT4,'Range',sprintf('A%d',3+fi)); end
+
+fprintf('Excel file written: %s\n', EXCEL_OUT);
+fprintf('  Sheet 1: D - Stiffness vs Cumulative Slip\n');
+fprintf('  Sheet 2: E - Normalised Stiffness Consistency\n');
+fprintf('  Sheet 3: B - Degradation Rate\n');
+fprintf('  Sheet 4: Summary of Key Findings\n\n');
+
+%  LOCAL FUNCTIONS
+function data = loadRun(file, sheetName, offset)
+    T = readtable(file,'Sheet',sheetName,'VariableNamingRule','preserve');
+    if offset < 1 || offset > height(T); offset = 1; end
+    T             = T(offset:end,:);
+    data.Time     = T{:,1} - T{1,1};
+    data.Load     = T{:,2} - T{1,2};
+    data.Position = T{:,3} - T{1,3};
+    if width(T) >= 4; data.SG = T{:,4:end}; else; data.SG = []; end
+end
+
+function kd = extractMetrics(load, pos, T40, T10, T70)
+    loadSm      = movmean(load,5);
+    [~, idx70]  = max(loadSm);
+    [~, locs40] = findpeaks(loadSm(1:idx70), ...
+        'MinPeakHeight',0.90*T40,'MinPeakDistance',50);
+    if isempty(locs40)
+        idx40=find(loadSm>=T40,1,'first'); if isempty(idx40); idx40=1; end
+    else
+        idx40=locs40(1);
+    end
+    window      = loadSm(idx40:idx70);
+    [~, locs10] = findpeaks(-window,'MinPeakHeight',-0.8*T40,'MinPeakDistance',30);
+    if isempty(locs10)
+        [~,idxMin]=min(window); idx10=idx40+idxMin-1;
+    else
+        [~,best]=min(abs(window(locs10)-T10)); idx10=idx40+locs10(best)-1;
+    end
+    kd.stiff = ternary(pos(idx40)>0.1, load(idx40)/pos(idx40), NaN);
+    kd.d40=pos(idx40); kd.d10=pos(idx10); kd.d70=pos(idx70);
+    kd.dmax=max(pos);  kd.dend=mean(pos(max(1,end-49):end));
+    kd.load40=load(idx40); kd.load70=load(idx70);
+end
+
+function out = ternary(cond, a, b)
+    if cond; out=a; else; out=b; end
+end
